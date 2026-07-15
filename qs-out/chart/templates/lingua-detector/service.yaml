@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: lingua-detector
+  labels:
+    app: lingua-detector
+spec:
+  selector:
+    app: lingua-detector
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP

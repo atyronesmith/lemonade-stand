@@ -1,0 +1,14 @@
+lemonade-stand has been installed.
+
+PREREQUISITES (must be installed before this chart):
+  - OpenShift AI operator installed (channel: fast)
+  - OpenShift Serverless operator installed
+  - Red Hat OpenShift Service Mesh operator installed
+  - DataScienceCluster configured with: kserve, dashboard, trustyai, modelmeshserving
+  - NVIDIA GPU Operator installed (channel: v24.9)
+  - Node Feature Discovery operator installed
+  - ClusterPolicy configured (mig_strategy: single)
+  - GPU node(s) available with nvidia.com/gpu resource
+
+After install, retrieve the application route with:
+  oc get route lemonade-stand-app -n lemonade-stand -o jsonpath="{.spec.host}"

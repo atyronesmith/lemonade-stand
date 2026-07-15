@@ -1,0 +1,16 @@
+{{- if .Values.monitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: lemonade-stand-app
+  labels:
+    app: lemonade-stand-app
+spec:
+  selector:
+    matchLabels:
+      app: lemonade-stand-app
+  endpoints:
+    - path: /metrics
+      port: http
+      interval: {{ .Values.monitor.interval }}
+{{- end }}

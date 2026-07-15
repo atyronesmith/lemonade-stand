@@ -1,0 +1,15 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: lemonade-stand-app
+  labels:
+    app: lemonade-stand-app
+spec:
+  to:
+    kind: Service
+    name: lemonade-stand-app
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
