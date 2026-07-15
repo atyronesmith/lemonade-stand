@@ -1,0 +1,5 @@
+# Generated VP output — never commit this
+vp-out/
+qs-out/
+.out/
+*.generated/

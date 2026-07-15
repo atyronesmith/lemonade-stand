@@ -1,0 +1,17 @@
+global:
+  pattern: ""
+
+image: quay.io/sara_banderby/shinydashboard:fedora
+replicas: 1
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: 500m
+    memory: 1Gi
+
+# Endpoint of lemonade-stand-app for metrics scraping
+metricsUrl: "http://lemonade-stand-app:8080/metrics"
+refreshInterval: "1"

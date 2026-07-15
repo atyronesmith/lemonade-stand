@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shiny-dashboard
+  labels:
+    app: shiny-dashboard
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      app: shiny-dashboard
+  template:
+    metadata:
+      labels:
+        app: shiny-dashboard
+    spec:
+      containers:
+        - name: shiny-dashboard
+          image: {{ .Values.image }}
+          ports:
+            - name: http
+              containerPort: 3838
+              protocol: TCP
+          env:
+            - name: METRICS_URL
+              value: {{ .Values.metricsUrl | quote }}
+            - name: REFRESH_INTERVAL
+              value: {{ .Values.refreshInterval | quote }}
+          resources:
+            requests:
+              cpu: {{ .Values.resources.requests.cpu | quote }}
+              memory: {{ .Values.resources.requests.memory }}
+            limits:
+              cpu: {{ .Values.resources.limits.cpu | quote }}
+              memory: {{ .Values.resources.limits.memory }}

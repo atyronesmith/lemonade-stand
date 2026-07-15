@@ -1,0 +1,5 @@
+global:
+  pattern: ""
+
+regexDetectorImage: quay.io/trustyai/regex-detector:latest
+vllmGatewayImage: quay.io/trustyai/vllm-orchestrator-gateway:latest

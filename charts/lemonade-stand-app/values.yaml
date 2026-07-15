@@ -1,0 +1,27 @@
+global:
+  pattern: ""
+
+image: quay.io/ckavili/lemon-fastapi:1.0.26
+replicas: 1
+
+resources:
+  requests:
+    cpu: "1"
+    memory: 1Gi
+  limits:
+    cpu: "2"
+    memory: 2Gi
+
+guardrailsHost: guardrails-orchestrator-service
+guardrailsPort: "8032"
+vllmModel: meta-llama/Llama-3.2-3B-Instruct
+
+# Secret created by lemonade-stand-secrets ExternalSecret chart
+vllmApiKeySecret: llm-secrets
+vllmApiKeySecretKey: api-key
+
+systemPromptConfigMap: lemonade-stand-system-prompt
+
+monitor:
+  enabled: true
+  interval: 3s

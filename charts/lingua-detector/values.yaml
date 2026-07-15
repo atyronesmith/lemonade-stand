@@ -1,0 +1,13 @@
+global:
+  pattern: ""
+
+image: quay.io/ckavili/lingua-language-detector:0.0.25
+replicas: 1
+
+resources:
+  requests:
+    cpu: "1"
+    memory: 2Gi
+  limits:
+    cpu: "2"
+    memory: 3Gi

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: lemonade-stand-app
+description: FastAPI chat frontend with lemon-only scope and guardrails integration
+version: 0.1.0
+type: application
