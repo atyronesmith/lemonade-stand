@@ -1,0 +1,5 @@
+apiVersion: v2
+name: shiny-dashboard
+description: R Shiny monitoring dashboard for lemonade-stand metrics
+version: 0.1.0
+type: application

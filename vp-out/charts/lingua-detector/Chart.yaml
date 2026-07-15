@@ -1,0 +1,5 @@
+apiVersion: v2
+name: lingua-detector
+description: Language detection service — English-only filter for guardrails
+version: 0.1.0
+type: application

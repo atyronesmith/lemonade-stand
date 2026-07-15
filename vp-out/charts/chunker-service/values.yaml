@@ -1,0 +1,13 @@
+global:
+  pattern: ""
+
+image: quay.io/rh-ee-mmisiura/chunkers:v2.0
+replicas: 1
+
+resources:
+  requests:
+    cpu: "1"
+    memory: 1Gi
+  limits:
+    cpu: "2"
+    memory: 2Gi

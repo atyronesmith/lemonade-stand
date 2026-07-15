@@ -1,0 +1,5 @@
+apiVersion: v2
+name: guardrails-config
+description: Auxiliary image references ConfigMap for TrustyAI GuardrailsOrchestrator
+version: 0.1.0
+type: application
