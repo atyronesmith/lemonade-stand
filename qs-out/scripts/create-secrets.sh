@@ -8,6 +8,14 @@ NAMESPACE="${NAMESPACE:-lemonade-stand}"
 
 echo "Creating secrets for namespace: $NAMESPACE"
 
+# model-storage (MinIO) — auto-generating credentials
+MODELSTORAGE_ACCESS=$(openssl rand -hex 16)
+MODELSTORAGE_SECRET=$(openssl rand -hex 32)
+oc create secret generic model-storage-credentials \
+  --from-literal=AWS_ACCESS_KEY_ID="${MODELSTORAGE_ACCESS}" \
+  --from-literal=AWS_SECRET_ACCESS_KEY="${MODELSTORAGE_SECRET}" \
+  -n "$NAMESPACE" --dry-run=client -o yaml | oc apply -f -
+
 # Secret: llm-vllm-api-key
 read -rsp "Enter vllm-api-key for llm-vllm-api-key: " VLLM_API_KEY; echo
 oc create secret generic llm-vllm-api-key \

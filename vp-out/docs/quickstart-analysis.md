@@ -13,11 +13,11 @@ The following operators are automatically installed by the Validated Pattern:
 
 | Operator | Subscription | Channel | Source |
 |----------|-------------|---------|--------|
-| OpenShift Service Mesh | servicemeshoperator | stable | redhat-operators |
 | Node Feature Discovery | nfd | stable | redhat-operators |
+| OpenShift Service Mesh | servicemeshoperator | stable | redhat-operators |
+| Red Hat OpenShift AI | rhods-operator | fast | redhat-operators |
 | NVIDIA GPU Operator | gpu-operator-certified | v24.9 | certified-operators |
 | OpenShift Serverless | serverless-operator | stable | redhat-operators |
-| Red Hat OpenShift AI | rhods-operator | fast | redhat-operators |
 
 ## Secrets Configuration
 

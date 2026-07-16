@@ -5,8 +5,8 @@
 # Fill these in before helm install, or use scripts/create-secrets.sh
 secrets:
   llmVllmApiKey: ""
-  modelStorageAws_access_key_id: ""
-  modelStorageAws_secret_access_key: ""
+  modelStorageAccessKey: ""
+  modelStorageSecretKey: ""
 
 # ── llm (model-serving) ──
 llm:
@@ -49,8 +49,17 @@ promptInjectionDetector:
 
 # ── model-storage (object-storage) ──
 modelStorage:
-  image: quay.io/trustyai/modelmesh-minio-examples:latest
-  storage: 50Gi
+  # provider: which storage backend to use at deploy time.
+  #   minio  = deploy MinIO in-cluster (default for bare metal)
+  #   odf    = use OpenShift Data Foundation (requires ODF installed)
+  #   s3     = use external AWS S3 or S3-compatible endpoint
+  provider: minio
+  bucket: data
+  storage: 50Gi  # MinIO PVC size; ignored for odf and s3
+  image: quay.io/trustyai/modelmesh-minio-examples:latest  # MinIO only
+  endpoint: ""  # s3: e.g. https://s3.amazonaws.com; derived for minio and odf
+  region: us-east-1  # s3 only
+  odfStorageClass: openshift-storage.noobaa.io  # odf only
 
 # ── guardrails (guardrails-orchestrator) ──
 guardrails:

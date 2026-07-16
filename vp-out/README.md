@@ -11,7 +11,7 @@ For full details, see the [original quickstart README](https://github.com/rh-ai-
 ## What This Pattern Provides
 
 - GitOps deployment via ArgoCD
-- Operator lifecycle management (OpenShift Service Mesh, Node Feature Discovery, NVIDIA GPU Operator, OpenShift Serverless, Red Hat OpenShift AI)
+- Operator lifecycle management (Node Feature Discovery, OpenShift Service Mesh, Red Hat OpenShift AI, NVIDIA GPU Operator, OpenShift Serverless)
 - HashiCorp Vault secret management
 - Multi-cloud support (AWS, Azure, GCP, IBM Cloud)
 

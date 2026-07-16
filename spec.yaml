@@ -240,7 +240,7 @@ blocks:
   model-storage:
     type: object-storage
     config:
-      provider: minio
+      provider: minio   # minio | odf | s3 — override via platform values at deploy time
       storage: 50Gi
       # init_models: list of HuggingFace model IDs to download at first boot.
       # The downloader writes to /mnt/models/huggingface/<model-id>/.
