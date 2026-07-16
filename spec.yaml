@@ -1,93 +1,192 @@
-# Lemonade-Stand Composition Spec — Phase 0 Validation
+# lemonade-stand — ApplicationSpec
 #
-# Hand-written spec defining the lemonade-stand quickstart using
-# composable building blocks. This is the input artifact for Phase 0:
-# we manually derive the VP artifacts this spec implies, then compare
-# against Drew's hand-crafted VP at validatedpatterns-sandbox/ai-quickstart-lemonade-stand.
+# This file is the source of truth for the lemonade-stand application.
+# Edit this file, then regenerate the outputs:
 #
-# Upstream QS: rh-ai-quickstart/lemonade-stand-assistant
-# Drew's VP:   validatedpatterns-sandbox/ai-quickstart-lemonade-stand
-# Date:        2026-07-09
+#   quickpat compose spec.yaml            # → vp-out/  (Validated Pattern for ArgoCD)
+#   quickpat compose spec.yaml --format qs  # → qs-out/ (Helm chart for direct install)
+#
+# Docs:
+#   Spec format reference:  https://github.com/atyronesmith/quickpat/blob/main/docs/compose-tutorial.md
+#   Block catalog:          https://github.com/atyronesmith/quickpat/blob/main/docs/compose-tutorial.md#blocks
+#   More examples:          https://github.com/atyronesmith/quickpat/tree/main/examples
 
+# apiVersion and kind identify this as a quickpat composition spec.
+# The compiler validates both fields before processing.
 apiVersion: supplychain/v1alpha1
 kind: ApplicationSpec
+
 metadata:
   name: lemonade-stand
+
   description: >-
     LLM guardrails demo with TrustyAI orchestration.
     Guardrailed chat assistant that only discusses lemons,
     with HAP detection, prompt injection detection, and
     language filtering.
+
+  # tier controls CI expectations for the generated VP:
+  #   sandbox    — ArgoCD sync expected, no automated pod readiness checks
+  #   tested     — CI validates ArgoCD sync and pod Ready state
+  #   maintained — CI + periodic upgrade testing + documented rollback path
   tier: sandbox
+
+  # upstream is the existing AI Quickstart Helm chart this spec wraps.
+  # In VP output (vp-out/), the main application ArgoCD app points here
+  # as a remote chart reference. Custom components in this repo's charts/
+  # directory are separate ArgoCD apps layered on top.
   upstream:
     repo: https://github.com/rh-ai-quickstart/lemonade-stand-assistant.git
     path: chart
     branch: main
 
-# ── Building Blocks ──────────────────────────────────────────────────
+# ── Blocks ───────────────────────────────────────────────────────────────────
+#
+# Blocks are named instances of shared building block types. Each type
+# encodes infrastructure knowledge: which operators to install, which
+# Kubernetes resources to generate, which secrets to externalize.
+#
+# The compiler resolves blocks in this order:
+#   1. Collect operators from all blocks → build subscription list
+#   2. Generate infra charts (DSC, ClusterPolicy) with config overrides
+#   3. Generate application resources (InferenceServices, MinIO, etc.)
+#   4. Wire secrets through Vault / ExternalSecrets
+#
+# Full block type reference:
+#   https://github.com/atyronesmith/quickpat/blob/main/docs/compose-tutorial.md#block-types
 
 blocks:
 
-  # OpenShift AI + dependent operators
+  # ── ai-platform-foundation ─────────────────────────────────────────────────
+  # Installs the three operators required by every OpenShift AI workload:
+  #   - Red Hat OpenShift AI (RHOAI) — KServe, TrustyAI, ModelMesh, Dashboard
+  #   - OpenShift Serverless — required for KServe InferenceService scale-to-zero
+  #   - Red Hat OpenShift Service Mesh — required for KServe traffic routing
+  #
+  # Also generates a DataScienceCluster (DSC) CR that activates the components
+  # this application actually needs. Unneeded components are set to Removed to
+  # minimize resource consumption and reduce the failure surface.
+  #
+  # Docs: https://github.com/atyronesmith/quickpat/blob/main/docs/compose-tutorial.md#ai-platform-foundation
   platform:
     type: ai-platform-foundation
     config:
       dsc:
+        # kserve: required — runs the LLM and detector InferenceServices
         kserve: Managed
+        # dashboard: required — makes InferenceServices visible in the RHOAI UI
         dashboard: Managed
+        # trustyai: required — runs the GuardrailsOrchestrator CR below
         trustyai: Managed
-        modelmeshserving: Managed     # codeflare left at default (empty = Managed)
+        # modelmeshserving: kept Managed (default) for model catalog compatibility
+        modelmeshserving: Managed
+        # The following components are not used by this application.
+        # Setting them to Removed prevents unnecessary operator workloads.
         datasciencepipelines: Removed
         kueue: Removed
         ray: Removed
         trainingoperator: Removed
         workbenches: Removed
 
-  # NFD + NVIDIA GPU Operator + ClusterPolicy
+  # ── gpu-compute ────────────────────────────────────────────────────────────
+  # Installs the GPU driver stack required for vLLM inference:
+  #   - Node Feature Discovery (NFD) — labels GPU nodes for scheduling
+  #   - NVIDIA GPU Operator — installs drivers, DCGM exporter, device plugin
+  #   - ClusterPolicy CR — configures the GPU operator behavior
+  #
+  # The llm block below declares gpu: true, which causes the compiler to add
+  # GPU resource requests and nvidia.com/gpu tolerations to the InferenceService.
+  # Omitting this block entirely is valid for CPU-only workloads.
+  #
+  # Docs: https://github.com/atyronesmith/quickpat/blob/main/docs/compose-tutorial.md#gpu-compute
   gpu:
     type: gpu-compute
     config:
+      # mig_strategy: none | single | mixed
+      # single = all GPUs on a node use the same MIG partition profile.
+      # Use none for standard (non-partitioned) GPU usage.
       mig_strategy: single
       vgpu_manager: false
+      # dcgm: enables the DCGM Exporter sidecar for GPU metrics (Prometheus)
       dcgm: true
       driver:
-        upgrade_policy: { auto_upgrade: true }
+        upgrade_policy:
+          # auto_upgrade: true allows the GPU Operator to upgrade drivers
+          # without manual intervention during minor version bumps.
+          auto_upgrade: true
 
-  # ── Model Serving ────────────────────────────────────────────────
+  # ── Model Serving ───────────────────────────────────────────────────────────
+  #
+  # model-serving blocks generate KServe resources:
+  #   - ServingRuntime  — defines the container and model format
+  #   - InferenceService — defines the model, replicas, storage, and resources
+  #
+  # Two profiles are supported:
+  #   llm-inference: vLLM on GPU, scale-to-zero capable (min replicas: 0)
+  #   classifier:    custom runtime on CPU, always-on (min replicas: 1)
+  #
+  # Storage options:
+  #   type: oci  — model pulled from an OCI image (modelcar pattern)
+  #   type: s3   — model pulled from an S3-compatible bucket at runtime
+  #                (references an object-storage block's data connection)
+  #
+  # Docs: https://github.com/atyronesmith/quickpat/blob/main/docs/compose-tutorial.md#model-serving
 
-  # Primary chat LLM
+  # Primary chat LLM — Llama 3.2 3B served via vLLM on GPU.
+  # Scale-to-zero (min: 0) to save GPU resources when idle.
+  # Model weights loaded from an OCI image (no S3 download at startup).
   llm:
     type: model-serving
     profile: llm-inference
     config:
       model: meta-llama/Llama-3.2-3B-Instruct
       runtime: vllm
+      # image: the vLLM serving runtime container from the RHOAI image catalog.
+      # Pin to a specific RHOAI release tag for reproducibility.
       image: quay.io/modh/vllm:rhoai-2.19-cuda
       gpu: true
       replicas:
-        min: 0
+        min: 0    # scale to zero when idle
         max: 1
       resources:
         requests: { cpu: 1, memory: 8Gi, gpu: 1 }
         limits:   { cpu: 4, memory: 20Gi, gpu: 1 }
+      # vllm_args: passed directly to the vLLM process as CLI flags.
+      # dtype: half reduces memory usage vs float32 with negligible quality impact.
+      # gpu_memory_utilization: fraction of GPU VRAM reserved for KV cache.
+      # max_model_len: maximum token context window.
+      # max_num_seqs: maximum concurrent sequences (throughput vs latency tradeoff).
       vllm_args:
         dtype: half
         gpu_memory_utilization: "0.95"
         max_model_len: 4096
         max_num_seqs: 384
+      # storage.type: oci uses the modelcar pattern — model weights are baked
+      # into an OCI image and mounted at /mnt/models by KServe's storage initializer.
+      # This eliminates the S3 download at pod startup.
       storage:
         type: oci
         uri: oci://quay.io/redhat-ai-services/modelcar-catalog:llama-3.2-3b-instruct
     secrets:
+      # vllm-api-key: guards the vLLM HTTP endpoint. Set to any non-empty string
+      # for dev clusters. Use a real token in production.
+      # generate: false means the user must supply this value — it will not be
+      # auto-generated. See scripts/create-secrets.sh for how to set it.
       vllm-api-key:
         vault_path: lemonade-stand
         generate: false
 
-  # HAP (Hate, Abuse, Profanity) detector
+  # HAP (Hate, Abuse, Profanity) detector — runs IBM Granite Guardian as a
+  # KServe InferenceService using the TrustyAI guardrails detector runtime.
+  # CPU-only (gpu: false), always-on (min: 1).
+  # Model weights pulled from MinIO at pod startup via the model-storage
+  # data connection (see model-storage block below).
   hap-detector:
     type: model-serving
     config:
       model: ibm-granite/granite-guardian-hap-125m
+      # runtime: custom means this block generates its own ServingRuntime
+      # rather than using the shared vllm/tgis/caikit runtime.
       runtime: custom
       image: quay.io/trustyai/guardrails-detector-huggingface-runtime:latest
       gpu: false
@@ -99,10 +198,14 @@ blocks:
         limits:   { cpu: 2, memory: 8Gi }
       storage:
         type: s3
+        # connection references the RHOAI data connection secret created by the
+        # model-storage block. The template variable is resolved by the compiler
+        # to the connection secret name (e.g. "model-storage-data-connection").
         connection: "{{ blocks.model-storage.output.connection_name }}"
         path: granite-guardian-hap-125m
 
-  # Prompt injection detector
+  # Prompt injection detector — detects attempts to override system instructions.
+  # Same runtime as HAP, different model, higher resource requirements.
   prompt-injection-detector:
     type: model-serving
     config:
@@ -121,14 +224,27 @@ blocks:
         connection: "{{ blocks.model-storage.output.connection_name }}"
         path: deberta-v3-base-prompt-injection-v2
 
-  # ── Object Storage ───────────────────────────────────────────────
-
-  # MinIO for detector model weights
+  # ── object-storage ──────────────────────────────────────────────────────────
+  # Deploys a MinIO instance for storing detector model weights.
+  # Generates:
+  #   - PersistentVolumeClaim for model storage
+  #   - MinIO Deployment with an init container that downloads models from
+  #     HuggingFace on first boot (uses quay.io/rgeada/llm_downloader)
+  #   - Service exposing the S3 API on port 9000
+  #   - RHOAI data connection Secret (referenced by the detector blocks above)
+  #
+  # The two secrets (access-key, secret-key) are externalized to Vault in VP
+  # output, or exposed as values.yaml placeholders in QS output.
+  #
+  # Docs: https://github.com/atyronesmith/quickpat/blob/main/docs/compose-tutorial.md#object-storage
   model-storage:
     type: object-storage
     config:
       provider: minio
       storage: 50Gi
+      # init_models: list of HuggingFace model IDs to download at first boot.
+      # The downloader writes to /mnt/models/huggingface/<model-id>/.
+      # Both detector models are listed here so a single MinIO instance serves both.
       init_models:
         - ibm-granite/granite-guardian-hap-125m
         - protectai/deberta-v3-base-prompt-injection-v2
@@ -140,14 +256,31 @@ blocks:
         vault_path: lemonade-stand/minio
         key: AWS_SECRET_ACCESS_KEY
 
-  # ── Guardrails ───────────────────────────────────────────────────
-
+  # ── guardrails-orchestrator ─────────────────────────────────────────────────
+  # Deploys a TrustyAI GuardrailsOrchestrator CR that routes chat through the
+  # detector chain before and after LLM generation.
+  #
+  # Request flow:
+  #   client → guardrails-orchestrator → [hap, prompt-injection, language] → llm
+  #                                   ← [hap, prompt-injection] ← llm response
+  #
+  # The orchestrator is configured via a ConfigMap (generated by the compiler)
+  # that specifies the detector endpoints, chunker, and LLM service hostname.
+  # All endpoint references use template variables that the compiler resolves
+  # to Kubernetes service names at generation time.
+  #
+  # Docs: https://github.com/atyronesmith/quickpat/blob/main/docs/compose-tutorial.md#guardrails-orchestrator
   guardrails:
     type: guardrails-orchestrator
     config:
       enable_built_in_detectors: true
       enable_guardrails_gateway: false
+      # otel_protocol: grpc | http — OpenTelemetry exporter protocol for traces
       otel_protocol: grpc
+      # detectors: named detector endpoints. Each entry maps to a KServe predictor
+      # service created by the model-serving blocks above.
+      # {{ blocks.X.output.predictor_host }} resolves to the InferenceService's
+      # predictor service name (e.g. "hap-detector-predictor").
       detectors:
         hap:
           endpoint: "{{ blocks.hap-detector.output.predictor_host }}"
@@ -155,23 +288,36 @@ blocks:
         prompt_injection:
           endpoint: "{{ blocks.prompt-injection-detector.output.predictor_host }}"
           port: 8000
+      # chunker: the text chunking microservice that splits input into segments
+      # for the detectors. Runs as a custom component (see custom section below).
       chunker:
         endpoint: "{{ custom.chunker-service.endpoint }}"
         port: 8085
+      # language_detector: filters non-English input before it reaches the LLM.
       language_detector:
         endpoint: "{{ custom.lingua-detector.endpoint }}"
         port: 8080
+      # llm: the chat generation service the orchestrator wraps.
       llm:
         endpoint: "{{ blocks.llm.output.predictor_host }}"
 
-# ── Wiring ─────────────────────────────────────────────────────────
-# Declares data flow between blocks. The compiler uses these to
-# validate connectivity and generate service references.
+# ── Wiring ───────────────────────────────────────────────────────────────────
+#
+# Wiring declares data-flow relationships between blocks. The compiler uses
+# these to validate that referenced block outputs exist and to document the
+# application's connectivity graph. Wiring does not generate Kubernetes
+# resources — connectivity in KServe happens via Kubernetes service names,
+# which are already captured in the guardrails block's detector config above.
+#
+# Format: from → to via <semantic label>
+# Docs: https://github.com/atyronesmith/quickpat/blob/main/docs/compose-tutorial.md#wiring
 
 wiring:
+  # Chat requests flow from the guardrails orchestrator to the LLM
   - from: guardrails
     to: llm
     via: chat-generation
+  # Detector model weights are pulled from MinIO at InferenceService startup
   - from: model-storage
     to: hap-detector
     via: model-weights
@@ -179,10 +325,25 @@ wiring:
     to: prompt-injection-detector
     via: model-weights
 
-# ── Custom Components ──────────────────────────────────────────────
-# These are the application's unique value — not blockifiable.
+# ── Custom Components ─────────────────────────────────────────────────────────
+#
+# Custom components are application-specific — they cannot be expressed as
+# parameterized building blocks because they carry unique business logic.
+# Their Helm chart templates live in this repo's charts/<name>/ directories
+# and are copied into the VP and QS outputs during generation.
+#
+# A component belongs here (not in blocks) when:
+#   - Its container image is specific to this application
+#   - Its behavior cannot be described by a block type's parameter surface
+#   - It would not be reused across other applications unchanged
+#
+# Docs: https://github.com/atyronesmith/quickpat/blob/main/docs/compose-tutorial.md#custom-components
 
 custom:
+  # FastAPI application — the actual lemon-only chat interface.
+  # Routes user messages through the guardrails orchestrator and returns
+  # filtered LLM responses. Mounted with a system prompt ConfigMap that
+  # enforces the lemon-only topic constraint at the LLM level.
   lemonade-stand-app:
     description: FastAPI chat frontend with lemon-only scope
     source:
@@ -191,14 +352,19 @@ custom:
     ports:
       - name: http
         port: 8080
-        route: true
+        route: true       # creates an OpenShift Route with TLS edge termination
         tls: { termination: edge }
     env:
+      # References the GuardrailsOrchestrator service created by the guardrails block.
+      # The compiler resolves this template variable at generation time.
       GUARDRAILS_ORCHESTRATOR_SERVICE_SERVICE_HOST: "{{ blocks.guardrails.output.service_host }}"
       GUARDRAILS_ORCHESTRATOR_SERVICE_SERVICE_PORT: "8032"
+      # VLLM_MODEL and VLLM_API_KEY reference values from the llm block above.
       VLLM_MODEL: "{{ blocks.llm.config.model | default 'llama32' }}"
       VLLM_API_KEY: "{{ blocks.llm.secrets.vllm-api-key }}"
     volumes:
+      # system-prompt ConfigMap is generated by charts/lemonade-stand-app/templates/
+      # configmap-system-prompt.yaml and constrains the LLM's topic to lemons.
       - name: system-prompt
         configMap: lemonade-stand-system-prompt
         mountPath: /system-prompt
@@ -209,10 +375,14 @@ custom:
       requests: { cpu: 1, memory: 1Gi }
       limits:   { cpu: 2, memory: 2Gi }
     monitor:
+      # ServiceMonitor for Prometheus scraping — metrics consumed by shiny-dashboard
       path: /metrics
       port: http
       interval: 3s
 
+  # Sentence chunker — splits input text into segments for the guardrails detectors.
+  # Required by the GuardrailsOrchestrator for processing long inputs.
+  # Exposes a gRPC API on port 8085.
   chunker-service:
     description: Text chunking microservice for guardrails
     source:
@@ -225,6 +395,8 @@ custom:
       requests: { cpu: 1, memory: 1Gi }
       limits:   { cpu: 2, memory: 2Gi }
 
+  # Language detector — filters non-English messages before they reach the LLM.
+  # Returns a language tag; the guardrails orchestrator rejects non-English input.
   lingua-detector:
     description: Language detection (English-only filter)
     source:
@@ -240,6 +412,10 @@ custom:
       requests: { cpu: 1, memory: 2Gi }
       limits:   { cpu: 2, memory: 3Gi }
 
+  # R Shiny monitoring dashboard — displays real-time metrics from the
+  # lemonade-stand-app ServiceMonitor. Polls the app's /metrics endpoint
+  # at REFRESH_INTERVAL seconds and visualizes throughput, latency, and
+  # guardrails trigger rates.
   shiny-dashboard:
     description: R Shiny monitoring dashboard
     source:
@@ -257,6 +433,9 @@ custom:
       requests: { cpu: 250m, memory: 512Mi }
       limits:   { cpu: 500m, memory: 1Gi }
 
+  # Auxiliary ConfigMap consumed by the GuardrailsOrchestrator for optional
+  # built-in detector and vLLM gateway image references. This is a configmap-type
+  # component — it generates no Deployment, only a ConfigMap.
   guardrails-config:
     description: Auxiliary image references for TrustyAI
     type: configmap
